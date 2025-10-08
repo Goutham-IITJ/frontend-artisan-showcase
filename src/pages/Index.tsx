@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
-import { Message, StreamEvent, ToolInfo } from "@/types/chat";
+import { Message, StreamEvent } from "@/types/chat";
 import { sendChatMessage } from "@/lib/api";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
@@ -16,8 +16,8 @@ const Index = () => {
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  scrollToBottom();
+}, [messages.length]);
 
   const handleSendMessage = async (content: string) => {
     const userMessage: Message = {
@@ -27,75 +27,62 @@ const Index = () => {
       timestamp: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    // Add user message and a placeholder for the assistant's response
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        tools: [],
+        isStreaming: true,
+      },
+    ]);
+
     setIsStreaming(true);
-
-    let assistantMessage: Message = {
-      id: (Date.now() + 1).toString(),
-      role: "assistant",
-      content: "",
-      timestamp: new Date().toISOString(),
-      tools: [],
-      isStreaming: true,
-    };
-
-    setMessages((prev) => [...prev, assistantMessage]);
-
-    const toolsMap = new Map<string, ToolInfo>();
 
     try {
       await sendChatMessage(content, (event: StreamEvent) => {
-        if (event.type === "text") {
-          assistantMessage = {
-            ...assistantMessage,
-            content: assistantMessage.content + event.content,
-          };
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = assistantMessage;
-            return newMessages;
-          });
-        } else if (event.type === "tool_call" && event.tool) {
-          toolsMap.set(event.tool.id, event.tool);
-          assistantMessage = {
-            ...assistantMessage,
-            tools: Array.from(toolsMap.values()),
-          };
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = assistantMessage;
-            return newMessages;
-          });
-        } else if (event.type === "tool_result" && event.tool) {
-          toolsMap.set(event.tool.id, event.tool);
-          assistantMessage = {
-            ...assistantMessage,
-            tools: Array.from(toolsMap.values()),
-          };
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = assistantMessage;
-            return newMessages;
-          });
-        } else if (event.type === "error") {
-          toast.error("Error: " + event.content);
-        } else if (event.type === "done") {
-          assistantMessage = {
-            ...assistantMessage,
-            isStreaming: false,
-          };
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = assistantMessage;
-            return newMessages;
-          });
-          setIsStreaming(false);
-        }
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const assistantMessage = newMessages[newMessages.length - 1];
+
+          switch (event.type) {
+            case "text":
+              assistantMessage.content += event.content;
+              break;
+
+            case "tool_call":
+            case "tool_result":
+              if (event.tool) {
+                const toolIndex = assistantMessage.tools?.findIndex((t) => t.id === event.tool!.id) ?? -1;
+                if (toolIndex > -1) {
+                  assistantMessage.tools![toolIndex] = event.tool;
+                } else {
+                  assistantMessage.tools = [...(assistantMessage.tools || []), event.tool];
+                }
+              }
+              break;
+
+            case "error":
+              toast.error("Error: " + event.content);
+              break;
+
+            case "done":
+              assistantMessage.isStreaming = false;
+              break;
+          }
+
+          return newMessages;
+        });
       });
     } catch (error) {
       toast.error("Failed to send message. Please try again.");
+      setMessages((prev) => prev.slice(0, -2)); // Remove user and assistant placeholder
+    } finally {
       setIsStreaming(false);
-      setMessages((prev) => prev.slice(0, -1));
     }
   };
 
